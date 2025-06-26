@@ -43,16 +43,14 @@ var (
 		MinimalQPS:                     100,
 		MaximalQPS:                     1000,
 		BurstableQPS:                   1000,
-		MemberClientCount:              3,
-		ClusterClientCount:             1,
+		MemberClientCount:              0,
+		ClusterClientCount:             2,
 		MaxNonUniqueRequestConcurrency: 3,
 	}
 	trafficNames = []string{
-		"etcd",
 		"kubernetes",
 	}
 	traffics = []traffic.Traffic{
-		traffic.EtcdPutDeleteLease,
 		traffic.Kubernetes,
 	}
 	NodeCount = "3"

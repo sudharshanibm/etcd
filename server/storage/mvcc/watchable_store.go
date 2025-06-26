@@ -154,6 +154,8 @@ func (s *watchableStore) watch(key, end []byte, startRev int64, id WatchID, ch c
 
 	watcherGauge.Inc()
 
+	fmt.Printf("Server new watch, watch: %d, startRev: %d, minRev: %d, synced: %v\n", id, wa.startRev, wa.minRev, synced)
+
 	return wa, func() { s.cancelWatcher(wa) }
 }
 
