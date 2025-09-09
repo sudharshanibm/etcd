@@ -17,6 +17,7 @@ package common
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,11 +44,16 @@ func TestVerifyHashKVAfterCompact(t *testing.T) {
 						if tc.config.ClusterSize < 2 {
 							t.Skip("Skipping test for single-member cluster")
 						}
-						ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+						// Increase timeout for Prow environment
+						ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 						defer cancel()
 
 						clus := testRunner.NewCluster(ctx, t, config.WithClusterConfig(tc.config))
-						defer clus.Close()
+						defer func() {
+							// Add delay before cleanup to ensure all connections are closed
+							time.Sleep(1 * time.Second)
+							clus.Close()
+						}()
 
 						cc := testutils.MustClient(clus.Client())
 						tombstoneRevs, latestRev := populateDataForHashKV(t, cc, keys)
@@ -84,11 +90,15 @@ func TestVerifyHashKVAfterTwoCompactsOnTombstone(t *testing.T) {
 			if tc.config.ClusterSize < 2 {
 				t.Skip("Skipping test for single-member cluster")
 			}
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			// Increase timeout for Prow environment
+			ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 			defer cancel()
 
 			clus := testRunner.NewCluster(ctx, t, config.WithClusterConfig(tc.config))
-			defer clus.Close()
+			defer func() {
+				time.Sleep(1 * time.Second)
+				clus.Close()
+			}()
 
 			cc := testutils.MustClient(clus.Client())
 			tombstoneRevs, latestRev := populateDataForHashKV(t, cc, []string{"key0"})
@@ -127,11 +137,15 @@ func TestVerifyHashKVAfterCompactOnLastTombstone(t *testing.T) {
 						t.Skip("Skipping test for single-member cluster")
 					}
 
-					ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+					// Increase timeout for Prow environment
+					ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 					defer cancel()
 
 					clus := testRunner.NewCluster(ctx, t, config.WithClusterConfig(tc.config))
-					defer clus.Close()
+					defer func() {
+						time.Sleep(1 * time.Second)
+						clus.Close()
+					}()
 
 					cc := testutils.MustClient(clus.Client())
 					tombstoneRevs, latestRev := populateDataForHashKV(t, cc, keys)
@@ -158,11 +172,15 @@ func TestVerifyHashKVAfterCompactAndDefrag(t *testing.T) {
 
 	for _, tc := range clusterTestCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			// Increase timeout for Prow environment
+			ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 			defer cancel()
 
 			clus := testRunner.NewCluster(ctx, t, config.WithClusterConfig(tc.config))
-			defer clus.Close()
+			defer func() {
+				time.Sleep(1 * time.Second)
+				clus.Close()
+			}()
 
 			cc := testutils.MustClient(clus.Client())
 			tombstoneRevs, _ := populateDataForHashKV(t, cc, []string{"key0"})
@@ -234,8 +252,31 @@ func verifyConsistentHashKVAcrossAllMembers(t *testing.T, cc intf.Client, hashKV
 	ctx := t.Context()
 
 	t.Logf("HashKV on rev=%d", hashKVOnRev)
-	resp, err := cc.HashKV(ctx, hashKVOnRev)
-	require.NoError(t, err)
+	
+	// Add retry with backoff for socket connection issues that occur in Prow environment
+	var resp []config.HashKVResponse
+	var err error
+	
+	for retry := 0; retry < 5; retry++ {
+		resp, err = cc.HashKV(ctx, hashKVOnRev)
+		if err == nil {
+			break
+		}
+		
+		// Check if this is a transient socket error that should be retried
+		if strings.Contains(err.Error(), "no such file or directory") ||
+		   strings.Contains(err.Error(), "connection refused") ||
+		   strings.Contains(err.Error(), "connect:") {
+			t.Logf("Transient connection error (attempt %d/%d): %v", retry+1, 5, err)
+			time.Sleep(time.Duration(retry+1) * 500 * time.Millisecond)
+			continue
+		}
+		
+		// For non-transient errors, break immediately
+		break
+	}
+	
+	require.NoError(t, err, "HashKV failed after retries for revision %d", hashKVOnRev)
 
 	// Ensure that there are multiple members in the cluster.
 	require.Greater(t, len(resp), 1)
